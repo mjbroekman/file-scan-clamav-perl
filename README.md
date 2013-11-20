@@ -4,6 +4,7 @@ file-scan-clamav-perl
 Connect to a local Clam Anti-Virus clamd service and send commands
 
 Original CPAN: http://search.cpan.org/~jamtur/File-Scan-ClamAV-1.91/
+Last CPAN Update: 06 Feb 2009
 
 From the CPAN maintainer: "I haven't been maintaining this module for some time."
 
