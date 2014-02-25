@@ -1,5 +1,4 @@
-# $Id: ClamAV.pm,v 1.91 2009/02/07 12:43:13 jamtur Exp $
-# Author: Colin Faber cfaber@fpsn.net, James Turnbull james@lovedthanlost.net
+# Author: Colin Faber cfaber@fpsn.net, James Turnbull james@lovedthanlost.net, Maarten Broekman maarten@broekman.us
 
 package File::Scan::ClamAV;
 use strict;
@@ -8,7 +7,7 @@ use vars qw($VERSION);
 use File::Find qw(find);
 use IO::Socket;
 
-$VERSION = $1 if('$Id: ClamAV.pm,v 1.91 2009/02/07 12:43:13 jamtur Exp $' =~ /,v ([\d.]+) /);
+# $VERSION = $1 if('$Id: ClamAV.pm,v 1.91 2009/02/07 12:43:13 jamtur Exp $' =~ /,v ([\d.]+) /);
 
 =head1 NAME
 
@@ -120,7 +119,9 @@ sub new {
     my $class = shift;
     my (%options) = @_;
     $options{port} ||= '/tmp/clamd';
+    $options{addr} ||= 'localhost';
     $options{find_all} ||= 0;
+#    $options{multiscan} ||= 0;
     return bless \%options, $class;
 }
 
@@ -133,18 +134,18 @@ On error nothing is returned and the errstr() error handler is set.
 =cut
 
 sub ping {
- my ($self) = @_;
- my $conn = $self->_get_connection || return;
+    my ($self) = @_;
+    my $conn = $self->_get_connection || return;
 
- $self->_send($conn, "PING\n");
- chomp(my $response = $conn->getline);
+    $self->_send($conn, "PING\n");
+    chomp(my $response = $conn->getline);
 
- # Run out the buffer?
- 1 while (<$conn>);
+    # Run out the buffer?
+    1 while (<$conn>);
 
- $conn->close;
+    $conn->close;
 
- return ($response eq 'PONG' ? 1 : $self->_seterrstr("Unknown reponse from ClamAV service: $response"));
+    return ($response eq 'PONG' ? 1 : $self->_seterrstr("Unknown reponse from ClamAV service: $response"));
 }
 
 =head2 scan($dir_or_file)
@@ -158,26 +159,26 @@ On error nothing is returned and the errstr() error handler is set. If no virus 
 =cut
 
 sub scan {
- my $self = shift;
- $self->_seterrstr;
- my @results;
+    my $self = shift;
+    $self->_seterrstr;
+    my @results;
+    my $scantype = ( $self->{multiscan} ) ? 'CONTSCAN' : 'SCAN';
+    if($self->{find_all}){
+	@results = $self->_scan($scantype, @_);
+    } else {
+	@results = $self->_scan_shallow($scantype, @_);
+    }
 
- if($self->{find_all}){
-	@results = $self->_scan('SCAN', @_);
- } else {
-	@results = $self->_scan_shallow('SCAN', @_);
- }
-
- my %f;
- for(@results){
+    my %f;
+    for(@results){
 	$f{ $_->[0] } = $_->[1];
- }
+    }
 
- if(%f){
+    if(%f){
 	return %f;
- } else {
+    } else {
 	return;
- }
+    }
 }
 
 =head2 rawscan($dir_or_file)
@@ -187,8 +188,8 @@ This method has been deprecated - use scan() instead
 =cut
 
 sub rawscan {
- warn "The rawscan() method is deprecated - using scan() instead";
- shift->scan(@_);
+    warn "The rawscan() method is deprecated - using scan() instead";
+    shift->scan(@_);
 }
 
 =head2 streamscan($data);
@@ -202,35 +203,35 @@ On failure it sets the errstr() error handler.
 =cut
 
 sub streamscan {
- my ($self) = shift;
+    my ($self) = shift;
 
- my $data = join '', @_;
+    my $data = join '', @_;
 
- $self->_seterrstr;
+    $self->_seterrstr;
 
- my $conn = $self->_get_connection || return;
- $self->_send($conn, "STREAM\n");
- chomp(my $response = $conn->getline);
+    my $conn = $self->_get_connection || return;
+    $self->_send($conn, "STREAM\n");
+    chomp(my $response = $conn->getline);
 
- my @return;
- if($response =~ /^PORT (\d+)/){
+    my @return;
+    if($response =~ /^PORT (\d+)/){
 	if((my $c = $self->_get_tcp_connection($1))){
-		$self->_send($c, $data);
-		$c->close;
-
-		chomp(my $r = $conn->getline);
-		if($r =~ /stream: (.+) FOUND/i){
-			@return = ('FOUND', $1);
-		} else {
-			@return = ('OK');
-		}
+	    $self->_send($c, $data);
+	    $c->close;
+	    
+	    chomp(my $r = $conn->getline);
+	    if($r =~ /stream: (.+) FOUND/i){
+		@return = ('FOUND', $1);
+	    } else {
+		@return = ('OK');
+	    }
 	} else {
-		$conn->close;
-		return;
+	    $conn->close;
+	    return;
 	}
- }
- $conn->close;
- return @return;
+    }
+    $conn->close;
+    return @return;
 }
 
 =head2 quit()
@@ -244,12 +245,12 @@ The test file t/03quit.t will currently wait 5 seconds before trying a kill -9 t
 =cut
 
 sub quit {
- my $self = shift;
- my $conn = $self->_get_connection || return;
- $self->_send($conn, "QUIT\n");
- 1 while (<$conn>);
- $conn->close;
- return 1;
+    my $self = shift;
+    my $conn = $self->_get_connection || return;
+    $self->_send($conn, "QUIT\n");
+    1 while (<$conn>);
+    $conn->close;
+    return 1;
 }
 
 =head2 reload()
@@ -259,14 +260,14 @@ Cause ClamAV clamd service to reload its virus database.
 =cut
 
 sub reload {
- my $self = shift;
- my $conn = $self->_get_connection || return;
- $self->_send($conn, "RELOAD\n");
-
- my $response = $conn->getline;
- 1 while (<$conn>);
- $conn->close;
- return 1;
+    my $self = shift;
+    my $conn = $self->_get_connection || return;
+    $self->_send($conn, "RELOAD\n");
+    
+    my $response = $conn->getline;
+    1 while (<$conn>);
+    $conn->close;
+    return 1;
 }
 
 =head2 errstr()
@@ -276,140 +277,143 @@ Return the last error message.
 =cut
 
 sub errstr {
- my ($self, $err) = @_;
- $self->{'.errstr'} = $err if $err;
- return $self->{'.errstr'};
+    my ($self, $err) = @_;
+    $self->{'.errstr'} = $err if $err;
+    return $self->{'.errstr'};
 }
 
 sub _scan {
- my $self = shift;
- my $cmd = shift;
- my $options = {};
+    my $self = shift;
+    my $cmd = shift;
+    my $options = {};
 
- if(ref($_[-1]) eq 'HASH') {
+    if(ref($_[-1]) eq 'HASH') {
 	$options = pop(@_);
- }
+    }
     
- # Ugh - a bug in clamd makes us do every file
- # on a separate connection! So we will do a File::Find
- # ourselves to get all the files, then do each on
- # a separate connection to the daemon. Hopefully
- # this bug will be fixed and I can remove this horrible
- # hack. -ms
+    # Ugh - a bug in clamd makes us do every file
+    # on a separate connection! So we will do a File::Find
+    # ourselves to get all the files, then do each on
+    # a separate connection to the daemon. Hopefully
+    # this bug will be fixed and I can remove this horrible
+    # hack. -ms
     
- # Files
- my @files = grep { -f $_ } @_;
+    # Files
+    my @files = grep { -f $_ } @_;
     
- # Directories
- for my $dir (@_){
+    # Directories
+    for my $dir (@_){
 	next unless -d $dir;
-	find(sub {
+	find(
+	    sub {
 		if(-f $File::Find::name) {
-			push @files, $File::Find::name;
+		    push @files, $File::Find::name;
 		}
-	}, $dir);
- }
+	    }, $dir
+	    );
+    }
 
- if(!@files) {
+    if(!@files) {
 	return $self->_seterrstr("scan() requires that you specify a directory or file to scan");
- }
+    }
     
- my @results;
+    my @results;
 
- for(@files){
+    for(@files){
 	push @results, $self->_scan_shallow($cmd, $_, $options);
- }
+    }
 
- return @results;
+    return @results;
 }
 
 sub _scan_shallow {
- # same as _scan, but stops at first virus
- my $self = shift;
- my $cmd = shift;
- my $options = {};
+    # same as _scan, but stops at first virus
+    my $self = shift;
+    my $cmd = shift;
+    my $options = {};
 
- if(ref($_[-1]) eq 'HASH') {
+    if(ref($_[-1]) eq 'HASH') {
         $options = pop(@_);
- }
+    }
 
- my @dirs = @_;
- my @results;
+    my @dirs = @_;
+    my @results;
 
- for my $file (@dirs){
+    for my $file (@dirs){
 	my $conn = $self->_get_connection || return;
 	$self->_send($conn, "$cmd $file\n");
-
+	
 	for my $result ($conn->getline){
-		chomp($result);
+	    chomp($result);
 
-		my @result = split(/\s/, $result);
+	    my @result = split(/\s/, $result);
 
-		chomp(my $code = pop @result);
-		if($code !~ /^(?:ERROR|FOUND|OK)$/){
-			$conn->close;
+	    chomp(my $code = pop @result);
+	    if($code !~ /^(?:ERROR|FOUND|OK)$/){
+		$conn->close;
 
-			return $self->_seterrstr("Unknown response code from ClamAV service: $code - " . join(" ", @result));
-		}
+		return $self->_seterrstr("Unknown response code from ClamAV service: $code - " . join(" ", @result));
+	    }
 
-		my $virus = pop @result;
-		my $file = join(" ", @result);
-		$file =~ s/:$//g;
+	    my $virus = pop @result;
+	    my $file = join(" ", @result);
+	    $file =~ s/:$//g;
 
-		if($code eq 'ERROR'){
-			$conn->close;
+	    if($code eq 'ERROR'){
+		$conn->close;
 
-			return $self->_seterrstr("Error while processing file: $file $virus");
-		} elsif($code eq 'FOUND'){
-			push @results, [$file, $virus, $code];
-		}
+		return $self->_seterrstr("Error while processing file: $file $virus");
+	    } elsif($code eq 'FOUND'){
+		push @results, [$file, $virus, $code];
+	    }
 	}
-
+	
 	$conn->close;
- }
+    }
 
- return @results;
+    return @results;
 }
 
 sub _seterrstr {
- my ($self, $err) = @_;
- $self->{'.errstr'} = $err;
- return;
+    my ($self, $err) = @_;
+    $self->{'.errstr'} = $err;
+    return;
 }
 
 sub _send {
- my ($self, $fh, $data) = @_;
- return syswrite $fh, $data, length($data);
+    my ($self, $fh, $data) = @_;
+    return syswrite $fh, $data, length($data);
 }
 
 sub _get_connection {
- my ($self) = @_;
- if($self->{port} =~ /\D/){
+    my ($self) = @_;
+    if($self->{port} =~ /\D/){
 	return $self->_get_unix_connection;
- } else {
+    } else {
 	return $self->_get_tcp_connection;
- }
+    }
 }
 
 sub _get_tcp_connection {
- my ($self, $port) = @_;
- $port ||= $self->{port};
-
- return IO::Socket::INET->new(
-	PeerAddr	=> 'localhost',
+    my ($self, $addr, $port) = @_;
+    $port ||= $self->{port};
+    $addr ||= $self->{addr};
+    
+    return IO::Socket::INET->new(
+	PeerAddr	=> defined($addr) ? $addr : 'localhost',
 	PeerPort	=> $port,
 	Proto		=> 'tcp',
 	Type		=> SOCK_STREAM,
 	Timeout		=> 10
- ) || $self->_seterrstr("Cannot connect to 'localhost:$port': $@");
+	) || $self->_seterrstr("Cannot connect to '$addr:$port': $@");
 }
 
 sub _get_unix_connection {
- my ($self) = @_;
- return IO::Socket::UNIX->new(
+    my ($self) = @_;
+    return IO::Socket::UNIX->new(
 	Type => SOCK_STREAM,
 	Peer => $self->{port}
- ) || $self->_seterrstr("Cannot connect to unix socket '$self->{port}': $@");
+	) || $self->_seterrstr("Cannot connect to unix socket '$self->{port}': $@");
 }
 
 1;
@@ -423,6 +427,6 @@ Originally based on the Clamd module authored by Matt Sergeant.
 
 =head1 LICENSE
 
-This is free software and may be used and distribute under terms of perl itself.
+This is free software and may be used and distributed under terms of perl itself.
 
 =cut
